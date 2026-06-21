@@ -1,0 +1,114 @@
+.card {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--creme);
+  border-radius: 10px;
+  border: none;
+  padding: 0;
+  font-family: var(--font-mono);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  user-select: none;
+}
+
+.card-md {
+  width: 64px;
+  height: 92px;
+}
+
+.card-sm {
+  width: 46px;
+  height: 66px;
+  font-size: 0.8rem;
+}
+
+.card-lg {
+  width: 84px;
+  height: 122px;
+}
+
+.card-black {
+  color: var(--naipe-preto);
+}
+
+.card-red {
+  color: var(--naipe-vermelho);
+}
+
+button.card:not(:disabled):hover {
+  transform: translateY(-6px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.45);
+}
+
+.card-disabled {
+  cursor: default;
+}
+
+.card-selected {
+  outline: 2px solid var(--ouro);
+  outline-offset: 2px;
+  transform: translateY(-10px);
+}
+
+.card-corner {
+  position: absolute;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1.05;
+  text-align: center;
+}
+
+.card-md .card-corner {
+  font-size: 0.74rem;
+}
+
+.card-corner-top {
+  top: 6px;
+  left: 7px;
+}
+
+.card-corner-bottom {
+  bottom: 6px;
+  right: 7px;
+  transform: rotate(180deg);
+}
+
+.card-center {
+  font-size: 1.5rem;
+}
+
+.card-manilha {
+  box-shadow: 0 0 0 2px var(--ouro), 0 8px 18px rgba(214, 165, 49, 0.5);
+}
+
+.card-manilha-tag {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ouro);
+  color: var(--tinta);
+  font-size: 0.5rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.card-back {
+  background: linear-gradient(135deg, var(--feltro-light), var(--feltro-dark));
+  border: 1.5px solid rgba(214, 165, 49, 0.4);
+}
+
+.card-back-pattern {
+  width: 70%;
+  height: 70%;
+  border: 1.5px solid rgba(214, 165, 49, 0.5);
+  border-radius: 6px;
+  background-image: repeating-linear-gradient(45deg, rgba(214, 165, 49, 0.15) 0, rgba(214, 165, 49, 0.15) 2px, transparent 2px, transparent 8px);
+}

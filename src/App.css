@@ -1,0 +1,113 @@
+.splash {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, var(--feltro) 0%, var(--feltro-dark) 70%, var(--tinta) 100%);
+  padding: 24px;
+}
+
+.splash-card {
+  text-align: center;
+  max-width: 480px;
+}
+
+.splash-card h1 {
+  font-size: clamp(2rem, 6vw, 3rem);
+  color: var(--ouro);
+  margin-bottom: 12px;
+}
+
+.splash-card p {
+  opacity: 0.9;
+  line-height: 1.5;
+}
+
+.error-text {
+  color: var(--creme);
+}
+
+.error-detail {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  opacity: 0.7;
+  margin-top: 8px;
+}
+
+.btn {
+  appearance: none;
+  border: none;
+  border-radius: 999px;
+  padding: 12px 26px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-primary {
+  background: linear-gradient(180deg, var(--ouro) 0%, var(--ouro-forte) 100%);
+  color: var(--tinta);
+  box-shadow: 0 6px 16px rgba(214, 165, 49, 0.35);
+}
+
+.btn-primary:hover:not(:disabled) {
+  box-shadow: 0 8px 20px rgba(214, 165, 49, 0.5);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--creme);
+  border: 1.5px solid rgba(243, 234, 210, 0.35);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  border-color: var(--ouro);
+  color: var(--ouro);
+}
+
+.btn-danger {
+  background: var(--vermelho);
+  color: var(--creme);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+
+.field label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+}
+
+.field input {
+  background: rgba(243, 234, 210, 0.08);
+  border: 1.5px solid rgba(243, 234, 210, 0.25);
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: var(--creme);
+  font-size: 1rem;
+}
+
+.field input::placeholder {
+  color: rgba(243, 234, 210, 0.4);
+}
+
+.field input:focus {
+  border-color: var(--ouro);
+}
