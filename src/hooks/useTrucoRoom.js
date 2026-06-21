@@ -245,17 +245,22 @@ export function useTrucoRoom({ code, userId, name, intent }) {
 
     if (result.error || !result.publicState) return
 
-    await supabase.from('rooms').update({ game_state: result.publicState, updated_at: new Date().toISOString() }).eq('id', room.id)
+    const { error: roomUpdateError } = await supabase
+      .from('rooms')
+      .update({ game_state: result.publicState, updated_at: new Date().toISOString() })
+      .eq('id', room.id)
+    if (roomUpdateError) console.error('[truco] falha ao gravar game_state:', roomUpdateError)
 
     if (action.type === 'PLAY_CARD') {
       const seatToUserId = {}
       playersRef.current.forEach((p) => (seatToUserId[p.seat] = p.user_id))
       const seat = action.seat
-      await supabase
+      const { error: handUpdateError } = await supabase
         .from('player_hands')
         .update({ cards: hostHandsRef.current[seat] || [], updated_at: new Date().toISOString() })
         .eq('room_id', room.id)
         .eq('user_id', seatToUserId[seat])
+      if (handUpdateError) console.error('[truco] falha ao atualizar a mão do assento', seat, handUpdateError)
     }
 
     if (result.publicState.status === 'finished') {
@@ -264,13 +269,22 @@ export function useTrucoRoom({ code, userId, name, intent }) {
   }, [userId])
 
   async function writeNewMao(roomRow, publicState, hands) {
-    await supabase
+    const { error: roomError } = await supabase
       .from('rooms')
       .update({ status: 'playing', game_state: publicState, updated_at: new Date().toISOString() })
       .eq('id', roomRow.id)
+    if (roomError) console.error('[truco] falha ao iniciar a mão (rooms.update):', roomError)
 
     const seatToUserId = {}
     playersRef.current.forEach((p) => (seatToUserId[p.seat] = p.user_id))
+    const missingSeats = Object.keys(hands).map(Number).filter((seat) => !seatToUserId[seat])
+    if (missingSeats.length) {
+      console.error(
+        '[truco] não achei o user_id de algum assento ao distribuir as cartas — provavelmente "players" ainda não tinha carregado todo mundo:',
+        { missingSeats, playersConhecidos: playersRef.current }
+      )
+    }
+
     const upserts = Object.entries(hands).map(([seat, cards]) => ({
       room_id: roomRow.id,
       user_id: seatToUserId[Number(seat)],
@@ -279,7 +293,8 @@ export function useTrucoRoom({ code, userId, name, intent }) {
       updated_at: new Date().toISOString(),
     }))
     if (upserts.length) {
-      await supabase.from('player_hands').upsert(upserts, { onConflict: 'room_id,user_id' })
+      const { error: handsError } = await supabase.from('player_hands').upsert(upserts, { onConflict: 'room_id,user_id' })
+      if (handsError) console.error('[truco] falha ao gravar as mãos (player_hands.upsert):', handsError, upserts)
     }
   }
 
