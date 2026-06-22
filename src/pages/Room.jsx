@@ -139,7 +139,7 @@ function LobbyView({ players, isHost, onStart, seatsFilled }) {
   )
 }
 
-function GameView({ room, gameState, players, mySeat, myTeam, myHand, canPlay, actions, onBackHome }) {
+function GameView({ room, gameState, players, mySeat, myTeam, myHand, canPlay, isHost, actions, onBackHome }) {
   if (!gameState) return null
 
   if (gameState.status === 'finished' || room.status === 'finished') {
