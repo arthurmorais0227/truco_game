@@ -208,21 +208,24 @@ export function useTrucoRoom({ code, userId, name, intent }) {
       )
       .subscribe()
 
-    // carrega a mão atual (caso já exista ao entrar/recarregar)
-    supabase
-      .from('player_hands')
-      .select('cards')
-      .eq('room_id', room.id)
-      .eq('user_id', userId)
-      .maybeSingle()
-      .then(({ data }) => setMyHand(data?.cards || []))
+    async function loadHand() {
+      const { data } = await supabase
+        .from('player_hands')
+        .select('cards')
+        .eq('room_id', room.id)
+        .eq('user_id', userId)
+        .maybeSingle()
+      setMyHand(data?.cards || [])
+    }
+
+    loadHand()
 
     return () => {
       supabase.removeChannel(roomSub)
       supabase.removeChannel(playersSub)
       supabase.removeChannel(handSub)
     }
-  }, [room?.id, userId])
+  }, [room?.id, room?.game_state?.status, userId])
 
   // ---------- canal de ações (jogadores -> host) e de chat (todos) ----------
   useEffect(() => {
@@ -257,7 +260,8 @@ export function useTrucoRoom({ code, userId, name, intent }) {
     if (!room || room.host_id !== userId) return
 
     if (action.type === 'START_GAME') {
-      const { publicState, hands } = startNewMao(emptyPublicState(0))
+      const prevState = room.game_state?.status === 'lobby' ? emptyPublicState(0) : room.game_state
+      const { publicState, hands } = startNewMao(prevState)
       hostHandsRef.current = hands
       await writeNewMao(room, publicState, hands)
       return
@@ -347,26 +351,6 @@ export function useTrucoRoom({ code, userId, name, intent }) {
       console.error('[truco] falha ao gravar as mãos:', insertError, inserts)
     }
   }
-
-  // ---------- host: avança automaticamente pra próxima mão após mostrar o resultado ----------
-  useEffect(() => {
-    if (!isHost || !room) return
-    if (room.game_state?.status !== 'mao_ended') {
-      advancingRef.current = false
-      return
-    }
-    if (advancingRef.current) return
-    advancingRef.current = true
-
-    const t = setTimeout(() => {
-      const { publicState, hands } = startNewMao(room.game_state)
-      hostHandsRef.current = hands
-      writeNewMao(room, publicState, hands)
-    }, MAO_REVEAL_DELAY_MS)
-
-    return () => clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHost, room])
 
   // ---------- API pública do hook ----------
   const sendAction = useCallback(

@@ -165,7 +165,13 @@ function GameView({ room, gameState, players, mySeat, myTeam, myHand, canPlay, a
             ? `Dupla ${gameState.lastMaoResult.winner} venceu a mão (+${gameState.lastMaoResult.value} ponto${gameState.lastMaoResult.value > 1 ? 's' : ''})`
             : 'Mão empatada — sem pontos'}
           <br />
-          <span className="mao-result-sub">Próxima mão em instantes…</span>
+          {isHost ? (
+            <button className="btn btn-primary btn-small" onClick={actions.startGame}>
+              Iniciar próximo ponto
+            </button>
+          ) : (
+            <span className="mao-result-sub">Aguardando o anfitrião iniciar o próximo ponto…</span>
+          )}
         </div>
       )}
 
