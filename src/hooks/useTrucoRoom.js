@@ -293,8 +293,16 @@ export function useTrucoRoom({ code, userId, name, intent }) {
       updated_at: new Date().toISOString(),
     }))
     if (upserts.length) {
-      const { error: handsError } = await supabase.from('player_hands').upsert(upserts, { onConflict: 'room_id,user_id' })
-      if (handsError) console.error('[truco] falha ao gravar as mãos (player_hands.upsert):', handsError, upserts)
+      // Não usamos upsert (INSERT ... ON CONFLICT DO UPDATE) aqui: pra resolver o
+      // conflito o Postgres exige permissão de SELECT do host sobre QUALQUER linha
+      // que poderia colidir — mesmo a de outro jogador, que a gente
+      // deliberadamente não deixa o host ler. Por isso: apaga as mãos antigas
+      // dessa sala e insere as novas do zero (insert puro não tem essa exigência).
+      const { error: deleteError } = await supabase.from('player_hands').delete().eq('room_id', roomRow.id)
+      if (deleteError) console.error('[truco] falha ao limpar mãos antigas:', deleteError)
+
+      const { error: handsError } = await supabase.from('player_hands').insert(upserts)
+      if (handsError) console.error('[truco] falha ao gravar as mãos (player_hands.insert):', handsError, upserts)
     }
   }
 
