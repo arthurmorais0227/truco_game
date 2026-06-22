@@ -113,15 +113,11 @@ export function useTrucoRoom({ code, userId, name, intent }) {
   }
 
   async function savePlayerHand(roomId, userId, cards) {
-    const { error } = await supabase.from('player_hands').upsert(
-      {
-        room_id: roomId,
-        user_id: userId,
-        cards,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: ['room_id', 'user_id'] }
-    )
+    const { error } = await supabase
+      .from('player_hands')
+      .update({ cards, updated_at: new Date().toISOString() })
+      .eq('room_id', roomId)
+      .eq('user_id', userId)
     return { error }
   }
 
@@ -328,17 +324,11 @@ export function useTrucoRoom({ code, userId, name, intent }) {
       return
     }
 
-    const { error: deleteError } = await supabase.from('player_hands').delete().eq('room_id', roomRow.id)
-    if (deleteError) {
-      console.error('[truco] falha ao limpar mãos antigas:', deleteError)
-      return
-    }
-
-    const { error: insertError } = await supabase.from('player_hands').upsert(inserts, {
+    const { error: upsertError } = await supabase.from('player_hands').upsert(inserts, {
       onConflict: ['room_id', 'user_id'],
     })
-    if (insertError) {
-      console.error('[truco] falha ao gravar as mãos:', insertError, inserts)
+    if (upsertError) {
+      console.error('[truco] falha ao gravar as mãos:', upsertError, inserts)
     }
   }
 
