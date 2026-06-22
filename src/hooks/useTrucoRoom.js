@@ -103,8 +103,71 @@ export function useTrucoRoom({ code, userId, name, intent }) {
     playersRef.current = players
   }, [players])
 
+  async function getSeatToUserId(roomId) {
+    const { data: players } = await supabase.from('players').select('seat,user_id').eq('room_id', roomId).order('seat')
+    const seatToUserId = {}
+    ;(players || []).forEach((p) => {
+      if (p?.seat != null) seatToUserId[p.seat] = p.user_id
+    })
+    return seatToUserId
+  }
+
+  async function loadHostHands(roomId) {
+    const { data: players } = await supabase.from('players').select('seat,user_id').eq('room_id', roomId).order('seat')
+    const { data: hands } = await supabase.from('player_hands').select('user_id,cards').eq('room_id', roomId)
+
+    const userToSeat = {}
+    ;(players || []).forEach((p) => {
+      if (p?.seat != null) userToSeat[p.user_id] = p.seat
+    })
+
+    const seatHands = {}
+    ;(hands || []).forEach((hand) => {
+      const seat = userToSeat[hand.user_id]
+      if (seat != null) seatHands[seat] = hand.cards
+    })
+
+    return seatHands
+  }
+
+  async function savePlayerHand(roomId, userId, cards) {
+    const { error } = await supabase.from('player_hands').upsert(
+      {
+        room_id: roomId,
+        user_id: userId,
+        cards,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: ['room_id', 'user_id'] }
+    )
+    return { error }
+  }
+
   const me = players.find((p) => p.user_id === userId) || null
   const isHost = !!room && room.host_id === userId
+
+  useEffect(() => {
+    if (!isHost || !room?.id || room.status !== 'playing') return
+    if (Object.keys(hostHandsRef.current).length >= 4) return
+
+    let cancelled = false
+    loadHostHands(room.id)
+      .then((hands) => {
+        if (cancelled) return
+        if (Object.keys(hands).length === 4) {
+          hostHandsRef.current = hands
+        } else {
+          console.error('[truco] host não conseguiu reconstituir todas as mãos do DB:', hands)
+        }
+      })
+      .catch((err) => {
+        console.error('[truco] falha ao carregar mãos do host:', err)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isHost, room?.id, room?.status])
 
   // ---------- setup: garante sala + jogador, conecta nos canais ----------
   useEffect(() => {
@@ -233,6 +296,13 @@ export function useTrucoRoom({ code, userId, name, intent }) {
     let result
 
     if (action.type === 'PLAY_CARD') {
+      if (!hostHandsRef.current || !Array.isArray(hostHandsRef.current[action.seat])) {
+        hostHandsRef.current = await loadHostHands(room.id)
+      }
+      if (!Array.isArray(hostHandsRef.current[action.seat])) {
+        console.error('[truco] host não tem mão carregada para o assento', action.seat)
+        return
+      }
       result = applyPlayCard(current, hostHandsRef.current, action.seat, action.card)
       if (result.hands) hostHandsRef.current = result.hands
     } else if (action.type === 'CALL_TRUCO') {
@@ -252,15 +322,15 @@ export function useTrucoRoom({ code, userId, name, intent }) {
     if (roomUpdateError) console.error('[truco] falha ao gravar game_state:', roomUpdateError)
 
     if (action.type === 'PLAY_CARD') {
-      const seatToUserId = {}
-      playersRef.current.forEach((p) => (seatToUserId[p.seat] = p.user_id))
+      const seatToUserId = await getSeatToUserId(room.id)
       const seat = action.seat
-      const { error: handUpdateError } = await supabase
-        .from('player_hands')
-        .update({ cards: hostHandsRef.current[seat] || [], updated_at: new Date().toISOString() })
-        .eq('room_id', room.id)
-        .eq('user_id', seatToUserId[seat])
-      if (handUpdateError) console.error('[truco] falha ao atualizar a mão do assento', seat, handUpdateError)
+      const userIdForSeat = seatToUserId[seat]
+      if (!userIdForSeat) {
+        console.error('[truco] não achei user_id ao atualizar mão do assento', seat, { seatToUserId })
+      } else {
+        const { error: handUpdateError } = await savePlayerHand(room.id, userIdForSeat, hostHandsRef.current[seat] || [])
+        if (handUpdateError) console.error('[truco] falha ao atualizar a mão do assento', seat, handUpdateError)
+      }
     }
 
     if (result.publicState.status === 'finished') {
@@ -275,8 +345,7 @@ export function useTrucoRoom({ code, userId, name, intent }) {
       .eq('id', roomRow.id)
     if (roomError) console.error('[truco] falha ao iniciar a mão (rooms.update):', roomError)
 
-    const seatToUserId = {}
-    playersRef.current.forEach((p) => (seatToUserId[p.seat] = p.user_id))
+    const seatToUserId = await getSeatToUserId(roomRow.id)
     const missingSeats = Object.keys(hands).map(Number).filter((seat) => !seatToUserId[seat])
     if (missingSeats.length) {
       console.error(
@@ -285,25 +354,35 @@ export function useTrucoRoom({ code, userId, name, intent }) {
       )
     }
 
-    const upserts = Object.entries(hands).map(([seat, cards]) => ({
-      room_id: roomRow.id,
-      user_id: seatToUserId[Number(seat)],
-      cards,
-      mao_number: (publicState.rounds?.length || 0) + 1,
-      updated_at: new Date().toISOString(),
-    }))
-    if (upserts.length) {
-      // Não usamos upsert (INSERT ... ON CONFLICT DO UPDATE) aqui: pra resolver o
-      // conflito o Postgres exige permissão de SELECT do host sobre QUALQUER linha
-      // que poderia colidir — mesmo a de outro jogador, que a gente
-      // deliberadamente não deixa o host ler. Por isso: apaga as mãos antigas
-      // dessa sala e insere as novas do zero (insert puro não tem essa exigência).
-      const { error: deleteError } = await supabase.from('player_hands').delete().eq('room_id', roomRow.id)
-      if (deleteError) console.error('[truco] falha ao limpar mãos antigas:', deleteError)
+    const inserts = Object.entries(hands)
+      .map(([seat, cards]) => ({
+        room_id: roomRow.id,
+        user_id: seatToUserId[Number(seat)],
+        cards,
+        mao_number: (publicState.rounds?.length || 0) + 1,
+        updated_at: new Date().toISOString(),
+      }))
+      .filter((row) => row.user_id)
 
-      const { error: handsError } = await supabase.from('player_hands').insert(upserts)
-      if (handsError) console.error('[truco] falha ao gravar as mãos (player_hands.insert):', handsError, upserts)
+    if (inserts.length < 4) {
+      console.error('[truco] distribuição incompleta de mãos:', { inserts, missingSeats })
+      return
     }
+
+    const { error: deleteError } = await supabase.from('player_hands').delete().eq('room_id', roomRow.id)
+    if (deleteError) console.error('[truco] falha ao limpar mãos antigas:', deleteError)
+
+    const insertResults = await Promise.all(
+      inserts.map((insertRow) =>
+        supabase.from('player_hands').upsert(insertRow, { onConflict: ['room_id', 'user_id'] })
+      )
+    )
+
+    insertResults.forEach((result, index) => {
+      if (result.error) {
+        console.error('[truco] falha ao gravar a mão do jogador', inserts[index].user_id, result.error)
+      }
+    })
   }
 
   // ---------- host: avança automaticamente pra próxima mão após mostrar o resultado ----------
