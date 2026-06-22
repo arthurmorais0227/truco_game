@@ -114,6 +114,11 @@ create policy "hands_update_host" on public.player_hands
     auth.uid() = (select host_id from public.rooms where id = room_id)
   );
 
+create policy "hands_delete_host" on public.player_hands
+  for delete using (
+    auth.uid() = (select host_id from public.rooms where id = room_id)
+  );
+
 -- ---------------------------------------------------------
 -- Realtime: habilita os eventos de INSERT/UPDATE/DELETE
 -- nessas tabelas pra todo mundo que esta "ouvindo" via supabase-js
