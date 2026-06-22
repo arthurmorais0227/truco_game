@@ -93,6 +93,7 @@ export default function Room({ userId }) {
           myTeam={myTeam}
           myHand={myHand}
           canPlay={canPlay}
+          isHost={isHost}
           actions={actions}
           onBackHome={() => navigate('/')}
         />
