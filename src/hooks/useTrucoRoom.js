@@ -2,8 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { startNewMao, applyPlayCard, applyCallTruco, applyRespondTruco, emptyPublicState } from '../lib/truco'
 
-const MAO_REVEAL_DELAY_MS = 2600
-
 // Trava por código: garante que só existe UMA tentativa de "criar/achar sala"
 // em voo por código, mesmo se o efeito do React rodar duas vezes (StrictMode em dev)
 // ou se duas abas tentarem a mesma coisa quase ao mesmo tempo.
@@ -90,7 +88,6 @@ export function useTrucoRoom({ code, userId, name, intent }) {
   const actionsChannelRef = useRef(null)
   const chatChannelRef = useRef(null)
   const hostHandsRef = useRef({}) // só populado no navegador do host: { [seat]: [cards] }
-  const advancingRef = useRef(false) // evita disparar a próxima mão duas vezes
 
   // refs sempre atualizadas: o listener de broadcast do host é montado uma única vez,
   // então não pode depender de closures de `room`/`players` que ficariam desatualizadas.
@@ -104,27 +101,32 @@ export function useTrucoRoom({ code, userId, name, intent }) {
   }, [players])
 
   async function getSeatToUserId(roomId) {
-    const { data: players } = await supabase.from('players').select('seat,user_id').eq('room_id', roomId).order('seat')
+    const { data: rows } = await supabase.from('players').select('seat,user_id').eq('room_id', roomId).order('seat')
     const seatToUserId = {}
-    ;(players || []).forEach((p) => {
+    ;(rows || []).forEach((p) => {
       if (p?.seat != null) seatToUserId[p.seat] = p.user_id
     })
     return seatToUserId
   }
 
-  async function savePlayerHand(roomId, userId, cards) {
+  async function savePlayerHand(roomId, targetUserId, cards) {
     const { error } = await supabase
       .from('player_hands')
       .update({ cards, updated_at: new Date().toISOString() })
       .eq('room_id', roomId)
-      .eq('user_id', userId)
+      .eq('user_id', targetUserId)
     return { error }
+  }
+
+  async function fetchMyHand(roomId) {
+    const { data } = await supabase.from('player_hands').select('cards').eq('room_id', roomId).eq('user_id', userId).maybeSingle()
+    setMyHand(data?.cards || [])
   }
 
   const me = players.find((p) => p.user_id === userId) || null
   const isHost = !!room && room.host_id === userId
 
-  // ---------- setup: garante sala + jogador, conecta nos canais ----------
+  // ---------- setup: garante sala + jogador ----------
   useEffect(() => {
     if (!userId || !code) return
     let cancelled = false
@@ -157,8 +159,14 @@ export function useTrucoRoom({ code, userId, name, intent }) {
   }, [userId, code])
 
   // ---------- realtime: sala (estado público), jogadores, minha mão ----------
+  // IMPORTANTE: essas inscrições devem durar a sala inteira. Elas só dependem
+  // de QUAL sala e QUEM somos -- nunca do estado do jogo (game_state.status),
+  // porque senão toda vez que uma mão termina/começa a inscrição é destruída e
+  // recriada bem no meio da troca de cartas no banco, perdendo o aviso de
+  // "chegou mão nova" (foi exatamente isso que causava o host ficar sem
+  // cartas ao iniciar o próximo ponto).
   useEffect(() => {
-    if (!room?.id) return
+    if (!room?.id || !userId) return
 
     const roomSub = supabase
       .channel(`room-row-${room.id}`)
@@ -177,39 +185,30 @@ export function useTrucoRoom({ code, userId, name, intent }) {
 
     const handSub = supabase
       .channel(`my-hand-${room.id}-${userId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'player_hands', filter: `room_id=eq.${room.id}` },
-        async () => {
-          const { data } = await supabase
-            .from('player_hands')
-            .select('cards')
-            .eq('room_id', room.id)
-            .eq('user_id', userId)
-            .maybeSingle()
-          setMyHand(data?.cards || [])
-        }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'player_hands', filter: `room_id=eq.${room.id}` }, () => {
+        fetchMyHand(room.id)
+      })
       .subscribe()
 
-    async function loadHand() {
-      const { data } = await supabase
-        .from('player_hands')
-        .select('cards')
-        .eq('room_id', room.id)
-        .eq('user_id', userId)
-        .maybeSingle()
-      setMyHand(data?.cards || [])
-    }
-
-    loadHand()
+    fetchMyHand(room.id)
 
     return () => {
       supabase.removeChannel(roomSub)
       supabase.removeChannel(playersSub)
       supabase.removeChannel(handSub)
     }
-  }, [room?.id, room?.game_state?.status, userId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.id, userId])
+
+  // ---------- rede de segurança: sempre que o estado público do jogo mudar
+  // (qualquer carta jogada, truco, nova mão...), busca minha mão de novo direto
+  // no banco. Não depende do canal de player_hands ter avisado a tempo --
+  // é só uma consulta leve, não recria nenhuma inscrição.
+  useEffect(() => {
+    if (!room?.id || !userId) return
+    fetchMyHand(room.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.game_state, room?.id, userId])
 
   // ---------- canal de ações (jogadores -> host) e de chat (todos) ----------
   useEffect(() => {
@@ -324,6 +323,9 @@ export function useTrucoRoom({ code, userId, name, intent }) {
       return
     }
 
+    // Sem upsert aqui de propósito: ON CONFLICT DO UPDATE exigiria que o host
+    // tivesse permissão de SELECT sobre a mão dos outros jogadores (que a gente
+    // nega por privacidade). Apaga tudo da rodada e insere de novo em vez disso.
     const { error: deleteError } = await supabase.from('player_hands').delete().eq('room_id', roomRow.id)
     if (deleteError) {
       console.error('[truco] falha ao limpar mãos antigas:', deleteError)
