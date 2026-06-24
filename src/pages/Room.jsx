@@ -33,6 +33,25 @@ export default function Room({ userId }) {
   const isMyTurn = gameState?.turnSeat === mySeat
   const canPlay = isMyTurn && gameState?.status === 'playing' && !gameState?.trucoState
 
+  // Em vez de confiar só em "myHand" estar sempre perfeitamente em dia (depende de
+  // um evento de tempo real chegar a tempo), filtramos aqui as cartas que o
+  // próprio game_state já mostra como jogadas pelo meu assento -- nessa rodada
+  // atual ou em rodadas anteriores da mesma mão. game_state é a mesma fonte que
+  // desenha a mesa pra todo mundo, então essa filtragem nunca fica desincronizada.
+  const remainingHand = useMemo(() => {
+    if (!gameState) return myHand
+    const playedIds = new Set()
+    ;(gameState.rounds || []).forEach((round) => {
+      (round.plays || []).forEach((p) => {
+        if (p.seat === mySeat) playedIds.add(p.card.id)
+      })
+    })
+    ;(gameState.table || []).forEach((p) => {
+      if (p.seat === mySeat) playedIds.add(p.card.id)
+    })
+    return myHand.filter((c) => !playedIds.has(c.id))
+  }, [myHand, gameState, mySeat])
+
   const seatsFilled = useMemo(() => players.length, [players])
 
   async function handleLeave() {
@@ -91,7 +110,7 @@ export default function Room({ userId }) {
           players={players}
           mySeat={mySeat}
           myTeam={myTeam}
-          myHand={myHand}
+          myHand={remainingHand}
           canPlay={canPlay}
           isHost={isHost}
           actions={actions}
