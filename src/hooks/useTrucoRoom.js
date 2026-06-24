@@ -88,6 +88,7 @@ export function useTrucoRoom({ code, userId, name, intent }) {
   const actionsChannelRef = useRef(null)
   const chatChannelRef = useRef(null)
   const hostHandsRef = useRef({}) // só populado no navegador do host: { [seat]: [cards] }
+  const handFetchTokenRef = useRef(0) // ignora respostas de busca de mão que chegam fora de ordem
 
   // refs sempre atualizadas: o listener de broadcast do host é montado uma única vez,
   // então não pode depender de closures de `room`/`players` que ficariam desatualizadas.
@@ -118,8 +119,13 @@ export function useTrucoRoom({ code, userId, name, intent }) {
     return { error }
   }
 
+  // Busca minha mão no banco. Usa um "token" pra garantir que, se duas buscas
+  // estiverem em voo, só o resultado da ÚLTIMA disparada é aplicado -- mesmo
+  // que a resposta de uma busca mais antiga chegue depois (resposta fora de ordem).
   async function fetchMyHand(roomId) {
+    const token = ++handFetchTokenRef.current
     const { data } = await supabase.from('player_hands').select('cards').eq('room_id', roomId).eq('user_id', userId).maybeSingle()
+    if (token !== handFetchTokenRef.current) return // uma busca mais nova já assumiu, ignora essa resposta
     setMyHand(data?.cards || [])
   }
 
@@ -159,12 +165,9 @@ export function useTrucoRoom({ code, userId, name, intent }) {
   }, [userId, code])
 
   // ---------- realtime: sala (estado público), jogadores, minha mão ----------
-  // IMPORTANTE: essas inscrições devem durar a sala inteira. Elas só dependem
-  // de QUAL sala e QUEM somos -- nunca do estado do jogo (game_state.status),
-  // porque senão toda vez que uma mão termina/começa a inscrição é destruída e
-  // recriada bem no meio da troca de cartas no banco, perdendo o aviso de
-  // "chegou mão nova" (foi exatamente isso que causava o host ficar sem
-  // cartas ao iniciar o próximo ponto).
+  // Essas inscrições duram a sala inteira: dependem só de QUAL sala e QUEM somos,
+  // nunca do estado do jogo -- senão, toda vez que uma mão termina/começa, a
+  // inscrição é destruída e recriada bem no meio da troca de cartas no banco.
   useEffect(() => {
     if (!room?.id || !userId) return
 
@@ -183,6 +186,9 @@ export function useTrucoRoom({ code, userId, name, intent }) {
       })
       .subscribe()
 
+    // Essa é a fonte definitiva da minha mão pra quem NÃO é host: dispara sempre
+    // que minha linha em player_hands muda de verdade no banco (apagada, criada
+    // de novo numa mão nova, ou atualizada quando jogo uma carta).
     const handSub = supabase
       .channel(`my-hand-${room.id}-${userId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'player_hands', filter: `room_id=eq.${room.id}` }, () => {
@@ -200,15 +206,16 @@ export function useTrucoRoom({ code, userId, name, intent }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room?.id, userId])
 
-  // ---------- rede de segurança: sempre que o estado público do jogo mudar
-  // (qualquer carta jogada, truco, nova mão...), busca minha mão de novo direto
-  // no banco. Não depende do canal de player_hands ter avisado a tempo --
-  // é só uma consulta leve, não recria nenhuma inscrição.
+  // ---------- gatilho extra (só pra quem NÃO é host): quando a vira muda, é
+  // sinal certo de que uma mão nova começou -- busca a mão de novo nesse exato
+  // momento, além de esperar o evento de tempo real do handSub acima. O host
+  // não precisa disso: ele já sabe a própria mão, atualizada direto em
+  // hostProcessAction, sem depender do banco.
   useEffect(() => {
-    if (!room?.id || !userId) return
+    if (!room?.id || !userId || isHost) return
     fetchMyHand(room.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room?.game_state, room?.id, userId])
+  }, [room?.game_state?.vira?.rank, room?.game_state?.vira?.suit, room?.id, userId, isHost])
 
   // ---------- canal de ações (jogadores -> host) e de chat (todos) ----------
   useEffect(() => {
@@ -242,10 +249,21 @@ export function useTrucoRoom({ code, userId, name, intent }) {
     const room = roomRef.current
     if (!room || room.host_id !== userId) return
 
+    const myPlayerRow = playersRef.current.find((p) => p.user_id === userId)
+    const mySeatAsHost = myPlayerRow?.seat
+
     if (action.type === 'START_GAME') {
       const prevState = room.game_state?.status === 'lobby' ? emptyPublicState(0) : room.game_state
       const { publicState, hands } = startNewMao(prevState)
       hostHandsRef.current = hands
+
+      // O host já sabe a própria mão (ele mesmo a distribuiu agora) -- atualiza
+      // a tela na hora, sem esperar nenhuma volta do banco/tempo real.
+      if (mySeatAsHost != null && hands[mySeatAsHost]) {
+        handFetchTokenRef.current++ // invalida qualquer busca antiga ainda em voo
+        setMyHand(hands[mySeatAsHost])
+      }
+
       await writeNewMao(room, publicState, hands)
       return
     }
@@ -259,7 +277,14 @@ export function useTrucoRoom({ code, userId, name, intent }) {
         return
       }
       result = applyPlayCard(current, hostHandsRef.current, action.seat, action.card)
-      if (result.hands) hostHandsRef.current = result.hands
+      if (result.hands) {
+        hostHandsRef.current = result.hands
+        // Se quem jogou foi o próprio host, atualiza a mão dele na tela na hora.
+        if (mySeatAsHost === action.seat) {
+          handFetchTokenRef.current++
+          setMyHand(result.hands[action.seat] || [])
+        }
+      }
     } else if (action.type === 'CALL_TRUCO') {
       result = applyCallTruco(current, action.team)
     } else if (action.type === 'RESPOND_TRUCO') {
